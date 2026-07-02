@@ -499,11 +499,11 @@ function JobsForYou({ skills, jobPreference, hasProfile }) {
                   ))}
                 </select>
                 <input
+                  className="resumever"
                   placeholder="Resume version"
                   value={t.resume}
                   onChange={(e) => update(m.company, { resume: e.target.value })}
                   onBlur={(e) => saveTracker(m.company, { resume: e.target.value })}
-                  style={{ width: 150 }}
                 />
                 <input
                   className="notes"

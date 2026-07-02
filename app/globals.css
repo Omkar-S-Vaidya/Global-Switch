@@ -35,14 +35,19 @@ body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   line-height: 1.45;
+  overflow-x: clip; /* kill accidental horizontal scroll on narrow screens */
 }
 
 button { font-family: inherit; }
 a { color: var(--accent); }
+img { max-width: 100%; }
+/* Long titles / emails / URLs never force horizontal overflow */
+.co, .role, .loc, .resumeMeta, .filename, .gaplabel, .jobbar { overflow-wrap: anywhere; }
 
 .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 96px; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
+.resumever { width: 160px; }
 
 /* ---------------- Top nav ---------------- */
 .nav {
@@ -512,6 +517,52 @@ footer.foot { margin-top: 32px; color: var(--faint); font-size: 12px; text-align
   .statusRow select, .statusRow input { width: 100%; }
 
   .segtabs, .viewtoggle { width: 100%; }
-  .tabs, .countries { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .viewtoggle button, .segtabs button { flex: 1; }
+  .tabs, .countries { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+  .tab, .country { flex: 0 0 auto; }
+  .resumever { width: 100%; }
+
+  /* Toolbar / filters wrap to full-width rows */
+  .toolbar select.filter { flex: 1 1 140px; }
+  .toolbar .btn { flex: 1 1 auto; }
+  .jobbar { gap: 8px; }
+  .jobbar select.filter { flex: 1 1 100%; }
+
+  /* Resume panel controls stack */
+  .resumeBody { gap: 8px; }
+  .resumeBody .paste { min-width: 0; flex: 1 1 100%; }
+  .filelabel, .filebtn { flex: 1 1 auto; text-align: center; }
+
   .authcard { padding: 24px 20px; }
+}
+
+/* ---------------- Fold / very narrow (cover screen ≈ 280px) ---------------- */
+@media (max-width: 430px) {
+  .wrap { padding: 12px 10px 80px; }
+  h1 { font-size: 18px; }
+  .sub { font-size: 13px; }
+
+  .navinner { padding: 8px 10px; gap: 6px; }
+  .navlink { padding: 7px 8px; }
+  .avatar { width: 28px; height: 28px; font-size: 13px; }
+  .logout { padding: 6px 9px; font-size: 12px; }
+
+  .stats { gap: 6px; }
+  .stat { padding: 7px 6px; min-width: 0; border-radius: 10px; }
+  .stat b { font-size: 16px; }
+  .stat span { font-size: 11px; }
+
+  .card { padding: 14px; }
+  .co { font-size: 15px; }
+  a.lnk { padding: 8px 8px; font-size: 12.5px; }
+  .toolbar select.filter { flex: 1 1 100%; }
+
+  .authshell { padding: 14px; }
+  .authcard { padding: 20px 16px; border-radius: 16px; }
+}
+
+/* Ultra-narrow: single-column action links */
+@media (max-width: 340px) {
+  .links { grid-template-columns: 1fr; }
+  .navlink span:not(.navlabel) { font-size: 15px; }
 }

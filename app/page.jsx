@@ -610,11 +610,11 @@ export default function Page() {
                     ))}
                   </select>
                   <input
+                    className="resumever"
                     placeholder="Resume version"
                     value={t.resume}
                     onChange={(e) => update(co.company, { resume: e.target.value })}
                     onBlur={(e) => saveTracker(co.company, { resume: e.target.value })}
-                    style={{ width: 160 }}
                   />
                   <input
                     className="notes"
