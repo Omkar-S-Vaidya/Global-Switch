@@ -1,0 +1,22 @@
+# dependencies
+/node_modules
+
+# next.js build output
+/.next/
+/out/
+/build
+
+# secrets — never commit (.env.example is kept)
+.env
+.env.local
+.env.*.local
+
+# logs & scratch
+*.log
+dev.out.log
+dev.err.log
+/_t/
+
+# OS / editor
+.DS_Store
+Thumbs.db
