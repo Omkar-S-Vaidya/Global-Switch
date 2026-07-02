@@ -175,6 +175,9 @@ select.filter:disabled { opacity: .5; cursor: not-allowed; }
   background: var(--red-soft); color: var(--red); border-color: #f3c2cb;
 }
 .skill.miss:hover { background: var(--red); color: #fff; border-color: var(--red); }
+/* Read-only (display) missing chips — no pointer, no hover invert */
+.skill.miss.static { cursor: default; }
+.skill.miss.static:hover { background: var(--red-soft); color: var(--red); border-color: #f3c2cb; }
 .addskills {
   margin-top: 9px; background: var(--accent-soft); color: var(--accent-ink);
   border: 1px solid var(--accent); border-radius: 9px; padding: 7px 13px;

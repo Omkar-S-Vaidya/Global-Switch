@@ -14,7 +14,6 @@ const PAGE_SIZE = 20;
 
 // Temporarily disabled — flip to true to re-enable.
 const RESUME_EDITOR_ENABLED = false;
-const MISSING_SKILLS_ENABLED = false;
 
 const initial = (name = "") => (name.trim()[0] || "?").toUpperCase();
 const monoStyle = (name = "") => {
@@ -142,24 +141,6 @@ export default function ProfilePage() {
       setSaving(false);
     }
   };
-
-  // Merge new skills (e.g. a job's missing requirements) into the profile and
-  // persist immediately. Résumé edits now happen through the résumé editor.
-  const addSkillsToProfile = useCallback(
-    async (toAdd) => {
-      const merged = Array.from(new Set([...skills, ...toAdd]));
-      if (merged.length === skills.length) return;
-      setSkills(merged);
-      try {
-        await fetch("/api/profile", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ currentSalary, expectedSalary, jobPreference, skills: merged }),
-        });
-      } catch {}
-    },
-    [skills, currentSalary, expectedSalary, jobPreference]
-  );
 
   const skillSet = useMemo(() => new Set(skills), [skills]);
   const selectedSkills = useMemo(() => SKILLS.filter(([k]) => skillSet.has(k)), [skillSet]);
@@ -329,7 +310,6 @@ export default function ProfilePage() {
             skills={skills}
             jobPreference={jobPreference}
             hasProfile={skills.length > 0}
-            onAddSkills={addSkillsToProfile}
           />
         )}
       </div>
@@ -354,7 +334,7 @@ export default function ProfilePage() {
 }
 
 // ---- Jobs matched to the saved profile ----
-function JobsForYou({ skills, jobPreference, hasProfile, onAddSkills }) {
+function JobsForYou({ skills, jobPreference, hasProfile }) {
   const [country, setCountry] = useState("singapore");
   const [countries, setCountries] = useState([]);
   const [data, setData] = useState(null);
@@ -362,7 +342,6 @@ function JobsForYou({ skills, jobPreference, hasProfile, onAddSkills }) {
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
   const [tracker, setTracker] = useState({});
-  const [busyKey, setBusyKey] = useState(null);
 
   // Same per-user tracker the home board uses, keyed by company.
   useEffect(() => {
@@ -492,36 +471,14 @@ function JobsForYou({ skills, jobPreference, hasProfile, onAddSkills }) {
                   ))}
                 </div>
               )}
-              {MISSING_SKILLS_ENABLED && m.missing.length > 0 && (
+              {m.missing.length > 0 && (
                 <div className="gaprow">
-                  <span className="gaplabel">Missing ({m.missing.length}) · tap to add to your profile:</span>
+                  <span className="gaplabel">Missing ({m.missing.length}):</span>
                   <div className="chipwrap small">
                     {m.missing.map((s) => (
-                      <button
-                        key={s}
-                        className="skill miss"
-                        title="Add this skill to your profile"
-                        onClick={() => onAddSkills([s])}
-                      >
-                        + {skillLabel(s)}
-                      </button>
+                      <span key={s} className="skill miss static">✗ {skillLabel(s)}</span>
                     ))}
                   </div>
-                  {m.missing.length > 1 && (
-                    <button
-                      className="addskills"
-                      disabled={busyKey === m.company + m.title}
-                      onClick={async () => {
-                        setBusyKey(m.company + m.title);
-                        await onAddSkills(m.missing);
-                        setBusyKey(null);
-                      }}
-                    >
-                      {busyKey === m.company + m.title
-                        ? "Adding…"
-                        : `➕ Add all ${m.missing.length} to my profile skills`}
-                    </button>
-                  )}
                 </div>
               )}
               <div className="links">
