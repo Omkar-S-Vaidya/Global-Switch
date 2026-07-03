@@ -49,6 +49,16 @@ img { max-width: 100%; }
 .small { font-size: 12.5px; }
 .resumever { width: 160px; }
 
+/* Best-time-to-apply banner */
+.applytime {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--amber-soft); border: 1px solid #f0d9a8; color: #7a5310;
+  border-radius: 10px; padding: 9px 13px; font-size: 13px; line-height: 1.45;
+  margin: 4px 0 14px;
+}
+.applytime b { color: inherit; font-weight: 700; }
+.applytimeIcon { font-size: 15px; }
+
 /* ---------------- Top nav ---------------- */
 .nav {
   position: sticky; top: 0; z-index: 50;

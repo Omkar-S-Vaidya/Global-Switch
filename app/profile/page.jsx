@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import Nav from "../components/Nav";
 import { fetchMe, fileToBase64 } from "../lib/client";
 import { parseResumeFile } from "../lib/parseResume";
 import { extractSkills, skillLabel, SKILLS } from "../lib/skills";
 import { STATUSES, STATUS_LABEL, EMPTY_ENTRY, loadTracker, saveTracker } from "../lib/tracker";
 import ResumeEditor from "../components/ResumeEditor";
+import ApplyTime from "../components/ApplyTime";
 
 const JOB_TYPES = ["Full-time", "Contract", "Internship", "Part-time", "Remote", "Hybrid", "On-site"];
 const PAGE_SIZE = 20;
@@ -64,6 +66,7 @@ export default function ProfilePage() {
     (async () => {
       try {
         const res = await fetch("/api/profile", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Server error (${res.status})`);
         const json = await res.json();
         const p = json.profile;
         if (p) {
@@ -76,7 +79,9 @@ export default function ProfilePage() {
           setResumeText(p.resumeText || "");
           setResumeData(p.resumeData || null);
         }
-      } catch {}
+      } catch (e) {
+        toast.error("Couldn't load your profile: " + e.message);
+      }
       setLoaded(true);
     })();
   }, [checking]);
@@ -131,12 +136,15 @@ export default function ProfilePage() {
           resume: pendingResume || undefined,
         }),
       });
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Save failed");
       setPendingResume(null);
       setMsg("Profile saved ✓");
+      toast.success("Profile saved");
     } catch (e) {
       setErr(e.message);
+      toast.error("Couldn't save profile: " + e.message);
     } finally {
       setSaving(false);
     }
@@ -358,12 +366,14 @@ function JobsForYou({ skills, jobPreference, hasProfile }) {
     setError(null);
     try {
       const res = await fetch(`/api/jobs?country=${key}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Failed to load");
       setData(json);
       if (json.countries) setCountries(json.countries);
     } catch (e) {
       setError(e.message);
+      toast.error("Couldn't load jobs: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -443,8 +453,16 @@ function JobsForYou({ skills, jobPreference, hasProfile }) {
         </span>
       </div>
 
+      <ApplyTime
+        country={country}
+        countryLabel={countries.find((c) => c.key === country)?.label}
+      />
+
       {error && <div className="error">Couldn&apos;t load jobs: {error}</div>}
 
+      {loading && <div className="loading">Matching live roles…</div>}
+
+      {!loading && (
       <div className="grid">
         {pageItems.map((m, i) => {
           const t = tracker[m.company] || EMPTY_ENTRY;
@@ -516,12 +534,13 @@ function JobsForYou({ skills, jobPreference, hasProfile }) {
             </div>
           );
         })}
-        {!loading && pageItems.length === 0 && (
-          <div className="empty">No live roles match your profile in this country yet — try another country.</div>
+        {pageItems.length === 0 && (
+          <div className="empty"><b>No data found.</b><br />No live roles match your profile in this country yet — try another country.</div>
         )}
       </div>
+      )}
 
-      {totalPages > 1 && (
+      {!loading && totalPages > 1 && (
         <div className="pager">
           <button className="btn ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹ Prev</button>
           <span className="muted small">Page {page} / {totalPages}</span>

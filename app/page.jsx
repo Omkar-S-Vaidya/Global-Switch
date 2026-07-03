@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import Nav from "./components/Nav";
+import ApplyTime from "./components/ApplyTime";
 import { fetchMe } from "./lib/client";
 import { extractSkills, skillLabel } from "./lib/skills";
 import { parseResumeFile } from "./lib/parseResume";
@@ -84,12 +86,14 @@ export default function Page() {
     setError(null);
     try {
       const res = await fetch(`/api/jobs?country=${countryKey}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Failed to load");
       setData(json);
       setTab((t) => t || json.categories?.[0]?.key);
     } catch (e) {
       setError(e.message);
+      toast.error("Couldn't load jobs: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -433,6 +437,11 @@ export default function Page() {
         {data?.source && <span className="sub">{data.source}</span>}
       </div>
 
+      <ApplyTime
+        country={country}
+        countryLabel={data?.countries?.find((c) => c.key === country)?.label}
+      />
+
       {loading && <div className="loading">Fetching live roles…</div>}
       {error && (
         <div className="error">
@@ -537,7 +546,8 @@ export default function Page() {
             })}
             {pageMatches.length === 0 && (
               <div className="empty">
-                No live roles match your resume skills in this country/filters yet.
+                <b>No data found.</b>
+                <br />No live roles match your resume skills in this country/filters yet.
               </div>
             )}
           </div>
@@ -629,6 +639,8 @@ export default function Page() {
           })}
           {pageCompanies.length === 0 && (
             <div className="empty">
+              <b>No data found.</b>
+              <br />
               {filtersActive
                 ? "No live roles match these filters here — clear filters or try another tab/country."
                 : "No live openings in this tier right now — try another tab or country."}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { fetchMe } from "../lib/client";
 
 export default function LoginPage() {
@@ -35,9 +36,11 @@ export default function LoginPage() {
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Something went wrong");
+      toast.success(mode === "login" ? "Welcome back!" : "Account created");
       router.replace("/");
     } catch (err) {
       setError(err.message);
+      toast.error(err.message);
     } finally {
       setBusy(false);
     }
