@@ -34,6 +34,8 @@ export default function Nav({ user }) {
 
         <div className="navlinks">
           {link("/", "Jobs", "💼")}
+          {link("/companies", "Companies", "🗂️")}
+          {link("/pipeline", "Pipeline", "📈")}
           {link("/profile", "Profile", "👤")}
         </div>
 

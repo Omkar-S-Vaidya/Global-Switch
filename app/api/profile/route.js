@@ -37,6 +37,32 @@ export async function GET() {
   });
 }
 
+// Partial update — currently just the skill set, so the job board can keep the
+// profile in sync when you upload a résumé or tap "add this skill" without
+// blanking salary/preference the way a full PUT would.
+export async function PATCH(request) {
+  const session = await getSession();
+  if (!session) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+
+  await ensureSchema();
+  const body = await request.json().catch(() => ({}));
+  if (!Array.isArray(body.skills)) {
+    return Response.json({ ok: false, error: "skills[] is required" }, { status: 400 });
+  }
+  const skills = body.skills.slice(0, 200);
+  const name = body.resumeName ? String(body.resumeName).slice(0, 300) : null;
+
+  await sql`
+    INSERT INTO profiles (user_id, skills, resume_name, updated_at)
+    VALUES (${session.uid}, ${JSON.stringify(skills)}::jsonb, ${name}, now())
+    ON CONFLICT (user_id) DO UPDATE SET
+      skills      = EXCLUDED.skills,
+      resume_name = COALESCE(EXCLUDED.resume_name, profiles.resume_name),
+      updated_at  = now()
+  `;
+  return Response.json({ ok: true, skills });
+}
+
 export async function PUT(request) {
   const session = await getSession();
   if (!session) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });

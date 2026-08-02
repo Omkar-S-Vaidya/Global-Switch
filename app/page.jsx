@@ -9,8 +9,32 @@ import { fetchMe } from "./lib/client";
 import { extractSkills, skillLabel } from "./lib/skills";
 import { parseResumeFile } from "./lib/parseResume";
 import { STATUSES, STATUS_LABEL as LABEL, EMPTY_ENTRY, loadTracker, saveTracker } from "./lib/tracker";
+import { BUCKET_KEYS } from "./lib/buckets";
+import { todayLocal, addDays, FOLLOW_UP_DAYS } from "./lib/dates";
 
 const PAGE_SIZE = 20;
+
+// "3d ago" / "2mo ago" — how stale a posting is, at a glance.
+function postedAgo(iso) {
+  if (!iso) return null;
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (!Number.isFinite(days) || days < 0) return null;
+  if (days === 0) return "today";
+  if (days === 1) return "1d ago";
+  if (days < 30) return `${days}d ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+// Salary is published by only a minority of boards (UK aggregators mostly), so
+// this renders a badge when it exists rather than pretending it's a filterable
+// field everywhere.
+function salaryLabel(min, max) {
+  if (min == null && max == null) return null;
+  const k = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+  if (min != null && max != null) return `${k(min)}–${k(max)}`;
+  return k(min ?? max);
+}
 
 function loadJSON(key, fallback) {
   if (typeof window === "undefined") return fallback;
@@ -43,9 +67,18 @@ export default function Page() {
   const [tab, setTab] = useState(null);
   const [page, setPage] = useState(1);
   const [hiringOnly, setHiringOnly] = useState(false);
-  const [country, setCountry] = useState("singapore");
+  const [country, setCountry] = useState("remote");
   const [expFilter, setExpFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  // Freshness is the highest-value filter here: the median posting is ~11 days
+  // old and the oldest is over a year, so undated/stale roles waste applications.
+  const [postedFilter, setPostedFilter] = useState("all");
+  const [visaFilter, setVisaFilter] = useState("all");
+  const [minMatch, setMinMatch] = useState(0);
+  const [hideApplied, setHideApplied] = useState(false);
+  // Company names + role URLs already logged in the pipeline, so applied roles
+  // can drop out of the list instead of being re-read every morning.
+  const [appliedKeys, setAppliedKeys] = useState({ urls: new Set(), companies: new Set() });
 
   // Resume matching
   const [resumeSkills, setResumeSkills] = useState([]);
@@ -66,6 +99,10 @@ export default function Page() {
     });
   }, [router]);
 
+  // Skills come from the saved profile — one source of truth, shared with the
+  // résumé editor and surviving a browser clear. localStorage is only a cache
+  // for the pre-login/offline case and is overridden whenever the profile has
+  // skills of its own.
   useEffect(() => {
     const rs = loadJSON("jobhunt.resumeSkills", []);
     const rn = loadJSON("jobhunt.resumeName", "");
@@ -75,11 +112,42 @@ export default function Page() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    fetch("/api/profile", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        const p = j?.profile;
+        if (p?.skills?.length) {
+          setResumeSkills(p.skills);
+          setResumeName(p.resumeName || "Your profile");
+        }
+      })
+      .catch(() => {});
+  }, [user]);
+
   // Load the user's saved application tracker from the database.
   useEffect(() => {
     if (!user) return;
     loadTracker().then(setTracker);
   }, [user]);
+
+  // Pipeline rows drive the "hide already applied" filter.
+  const loadApplied = useCallback(async () => {
+    try {
+      const res = await fetch("/api/applications?limit=500", { cache: "no-store" });
+      const j = await res.json();
+      const rows = (j.applications || []).filter((a) => a.status !== "saved");
+      setAppliedKeys({
+        urls: new Set(rows.map((a) => a.role_url).filter(Boolean)),
+        companies: new Set(rows.map((a) => a.company_name)),
+      });
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (user) loadApplied();
+  }, [user, loadApplied]);
 
   const load = useCallback(async (countryKey) => {
     setLoading(true);
@@ -90,7 +158,7 @@ export default function Page() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Failed to load");
       setData(json);
-      setTab((t) => t || json.categories?.[0]?.key);
+      setTab((t) => t || "all");
     } catch (e) {
       setError(e.message);
       toast.error("Couldn't load jobs: " + e.message);
@@ -105,11 +173,23 @@ export default function Page() {
 
   useEffect(() => {
     setPage(1);
-  }, [tab, hiringOnly, expFilter, typeFilter, viewMode, country]);
+  }, [
+    tab,
+    hiringOnly,
+    expFilter,
+    typeFilter,
+    viewMode,
+    country,
+    postedFilter,
+    visaFilter,
+    minMatch,
+    hideApplied,
+  ]);
 
-  // Keep the active tab on one that actually has live openings.
+  // Keep the active tab on one that actually has live openings. "All" always
+  // has data by definition, so it's exempt.
   useEffect(() => {
-    if (!data?.counts || !data?.categories) return;
+    if (!data?.counts || !data?.categories || tab === "all") return;
     const hasData = tab && data.counts[tab]?.total > 0;
     if (!hasData) {
       const firstNonEmpty = data.categories.find((c) => data.counts[c.key]?.total > 0);
@@ -117,40 +197,113 @@ export default function Page() {
     }
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filtersActive = expFilter !== "all" || typeFilter !== "all";
+  const filtersActive =
+    expFilter !== "all" || typeFilter !== "all" || postedFilter !== "all";
 
+  // A role with no posting date can't satisfy a freshness filter, so it is
+  // excluded rather than waved through — otherwise "last 7 days" would silently
+  // include year-old listings. The count of those is surfaced in the toolbar.
   const matchRoles = useCallback(
-    (roles = []) =>
-      roles.filter(
-        (r) =>
-          (expFilter === "all" || r.exp === expFilter) &&
-          (typeFilter === "all" || r.type === typeFilter)
-      ),
-    [expFilter, typeFilter]
+    (roles = []) => {
+      const cutoff =
+        postedFilter === "all" ? null : Date.now() - Number(postedFilter) * 86400000;
+      return roles.filter((r) => {
+        if (expFilter !== "all" && r.exp !== expFilter) return false;
+        if (typeFilter !== "all" && r.type !== typeFilter) return false;
+        if (cutoff !== null) {
+          if (!r.updatedAt) return false;
+          if (new Date(r.updatedAt).getTime() < cutoff) return false;
+        }
+        return true;
+      });
+    },
+    [expFilter, typeFilter, postedFilter]
   );
+
+  // How many roles the freshness filter is dropping purely for lacking a date —
+  // shown so the filter never looks like it found nothing when it just can't tell.
+  const undatedCount = useMemo(() => {
+    if (postedFilter === "all" || !data?.companies) return 0;
+    let n = 0;
+    for (const c of data.companies) for (const r of c.roles || []) if (!r.updatedAt) n++;
+    return n;
+  }, [data, postedFilter]);
+
+  const passesCompanyFilters = useCallback(
+    (c) => visaFilter === "all" || c.visa === visaFilter,
+    [visaFilter]
+  );
+
+  const anyFilterOn =
+    filtersActive || visaFilter !== "all" || minMatch > 0 || hideApplied;
 
   // Update local state immediately; persist to the DB when `commit` is true
   // (on select change / input blur) to avoid a write on every keystroke.
-  const update = (company, patch, commit = false) => {
+  //
+  // A status change also writes a pipeline row. Without this the board and the
+  // quota dashboard disagree: marking something applied here would never count
+  // toward the day's target.
+  const update = (company, patch, commit = false, ctx = null) => {
     setTracker((prev) => ({
       ...prev,
       [company]: { ...(prev[company] || EMPTY_ENTRY), ...patch },
     }));
-    if (commit) saveTracker(company, patch);
+    if (!commit) return;
+    saveTracker(company, patch);
+    if (patch.status && patch.status !== "none") logToPipeline(company, patch.status, ctx);
   };
 
+  const logToPipeline = useCallback(
+    async (company, status, ctx) => {
+      const today = todayLocal();
+      try {
+        await fetch("/api/applications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyName: company,
+            // "All countries" isn't a bucket, so fall back to the company's own.
+            bucket: BUCKET_KEYS.includes(country) ? country : ctx?.bucket || "remote",
+            roleTitle: ctx?.title || "",
+            roleUrl: ctx?.url || "",
+            status,
+            appliedOn: today,
+            followUpOn: addDays(today, FOLLOW_UP_DAYS),
+            source: "Job board",
+          }),
+        });
+        loadApplied();
+      } catch {}
+    },
+    [country, loadApplied]
+  );
+
   // ---- Resume handling ----
-  const applyResumeText = useCallback((text, name) => {
-    const skills = extractSkills(text || "");
-    setResumeSkills(skills);
-    setResumeName(name || "Pasted text");
-    setParseError(skills.length ? null : "No known skills detected — try pasting more detail.");
-    if (skills.length) setViewMode("matches");
+  // Skills are mirrored to the profile so the board, the résumé editor and the
+  // matcher all read the same set. localStorage stays as a fast local cache.
+  const persistSkills = useCallback((skills, name) => {
     try {
       localStorage.setItem("jobhunt.resumeSkills", JSON.stringify(skills));
-      localStorage.setItem("jobhunt.resumeName", JSON.stringify(name || "Pasted text"));
+      if (name) localStorage.setItem("jobhunt.resumeName", JSON.stringify(name));
     } catch {}
+    fetch("/api/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skills, resumeName: name || undefined }),
+    }).catch(() => {});
   }, []);
+
+  const applyResumeText = useCallback(
+    (text, name) => {
+      const skills = extractSkills(text || "");
+      setResumeSkills(skills);
+      setResumeName(name || "Pasted text");
+      setParseError(skills.length ? null : "No known skills detected — try pasting more detail.");
+      if (skills.length) setViewMode("matches");
+      persistSkills(skills, name || "Pasted text");
+    },
+    [persistSkills]
+  );
 
   const onFile = async (file) => {
     if (!file) return;
@@ -182,21 +335,28 @@ export default function Page() {
 
   // Add skills the resume is missing (e.g. from a job's requirements) to the
   // detected skill set so future matches improve.
-  const addResumeSkills = useCallback((toAdd) => {
-    setResumeSkills((prev) => {
-      const merged = Array.from(new Set([...prev, ...toAdd]));
-      try {
-        localStorage.setItem("jobhunt.resumeSkills", JSON.stringify(merged));
-      } catch {}
-      return merged;
-    });
-  }, []);
+  const addResumeSkills = useCallback(
+    (toAdd) => {
+      setResumeSkills((prev) => {
+        const merged = Array.from(new Set([...prev, ...toAdd]));
+        persistSkills(merged);
+        return merged;
+      });
+    },
+    [persistSkills]
+  );
 
   // ---- Companies view ----
   const tabCompanies = useMemo(() => {
     const all = data?.companies || [];
     let list = all
-      .filter((c) => c.category === tab)
+      .filter(
+        (c) =>
+          (tab === "all" || c.category === tab) &&
+          passesCompanyFilters(c) &&
+          // At company level, "hide applied" hides the employer outright.
+          !(hideApplied && appliedKeys.companies.has(c.company))
+      )
       .map((c) => {
         const fr = matchRoles(c.roles);
         return {
@@ -214,29 +374,38 @@ export default function Page() {
       if (bv !== av) return bv - av;
       return a.company.localeCompare(b.company);
     });
-  }, [data, tab, hiringOnly, filtersActive, matchRoles]);
+  }, [data, tab, hiringOnly, filtersActive, matchRoles, passesCompanyFilters, hideApplied, appliedKeys]);
 
   // ---- Resume matches view (all live roles in country, ranked by skill overlap) ----
   const matchedRoles = useMemo(() => {
     if (!hasResume || !data?.companies) return [];
     const out = [];
     for (const c of data.companies) {
+      if (!passesCompanyFilters(c)) continue;
+      if (tab !== "all" && tab && c.category !== tab) continue;
       for (const r of matchRoles(c.roles || [])) {
+        // Matched at role level, not company level — applying to one Adyen role
+        // shouldn't hide the other 25.
+        if (hideApplied && appliedKeys.urls.has(r.url)) continue;
         const matched = (r.skills || []).filter((s) => resumeSet.has(s));
         if (!matched.length) continue;
         const missing = (r.skills || []).filter((s) => !resumeSet.has(s));
         const reqPct = r.skills.length
           ? Math.round((matched.length / r.skills.length) * 100)
           : 0;
+        if (reqPct < minMatch) continue;
         out.push({
           company: c.company,
           sector: c.sector,
           category: c.category,
+          visa: c.visa,
           title: r.title,
           url: r.url,
           location: r.location,
           exp: r.exp,
           type: r.type,
+          salaryMin: r.salaryMin ?? null,
+          salaryMax: r.salaryMax ?? null,
           score: matched.length,
           reqPct,
           matched,
@@ -247,7 +416,17 @@ export default function Page() {
     }
     out.sort((a, b) => b.score - a.score || b.reqPct - a.reqPct);
     return out;
-  }, [hasResume, data, matchRoles, resumeSet]);
+  }, [
+    hasResume,
+    data,
+    matchRoles,
+    resumeSet,
+    passesCompanyFilters,
+    tab,
+    hideApplied,
+    appliedKeys,
+    minMatch,
+  ]);
 
   const inMatches = viewMode === "matches" && hasResume;
   const listLength = inMatches ? matchedRoles.length : tabCompanies.length;
@@ -379,9 +558,18 @@ export default function Page() {
         </div>
       )}
 
-      {/* Tier tabs (company view only) */}
-      {!inMatches && data?.categories && (
+      {/* Tier tabs — "All" first, matching the company database */}
+      {data?.categories && (
         <div className="tabs">
+          <button
+            className={`tab ${tab === "all" ? "active" : ""}`}
+            onClick={() => setTab("all")}
+          >
+            All tiers
+            <span className="tabcount">
+              {Object.values(data.counts || {}).reduce((s, c) => s + (c.total || 0), 0)}
+            </span>
+          </button>
           {data.categories.map((c) => {
             const cnt = data.counts?.[c.key] || { total: 0 };
             const empty = cnt.total === 0;
@@ -405,6 +593,17 @@ export default function Page() {
         <button className="btn" onClick={() => load(country)} disabled={loading}>
           {loading ? "Loading…" : "↻ Refresh"}
         </button>
+        <select
+          className="filter"
+          value={postedFilter}
+          onChange={(e) => setPostedFilter(e.target.value)}
+          title="Roles without a posting date are excluded when this is set"
+        >
+          <option value="all">Any date</option>
+          <option value="7">🔥 Posted this week</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
         <select className="filter" value={expFilter} onChange={(e) => setExpFilter(e.target.value)}>
           <option value="all">Any experience</option>
           <option value="intern">Intern / Grad</option>
@@ -412,6 +611,7 @@ export default function Page() {
           <option value="mid">Mid-level</option>
           <option value="senior">Senior</option>
           <option value="lead">Lead / Staff / Principal</option>
+          <option value="unknown">Unspecified</option>
         </select>
         <select className="filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="all">Any job type</option>
@@ -420,19 +620,57 @@ export default function Page() {
           <option value="internship">Internship</option>
           <option value="parttime">Part-time</option>
         </select>
-        <select className="filter" disabled title="Greenhouse boards don't expose salary data">
-          <option>💰 Salary (n/a)</option>
+        <select
+          className="filter"
+          value={visaFilter}
+          onChange={(e) => setVisaFilter(e.target.value)}
+          title="Sponsorship likelihood, from your company database"
+        >
+          <option value="all">Any sponsorship</option>
+          <option value="yes">🛂 Sponsors visas</option>
+          <option value="likely">Likely sponsors</option>
+          <option value="n/a">Remote — n/a</option>
         </select>
-        {filtersActive && (
+        {inMatches && (
+          <select
+            className="filter"
+            value={minMatch}
+            onChange={(e) => setMinMatch(Number(e.target.value))}
+            title="Minimum share of the role's listed skills that you already have"
+          >
+            <option value={0}>Any fit</option>
+            <option value={25}>🎯 25%+ fit</option>
+            <option value={50}>50%+ fit</option>
+            <option value={75}>75%+ fit</option>
+          </select>
+        )}
+        <label className="checkfilter">
+          <input
+            type="checkbox"
+            checked={hideApplied}
+            onChange={(e) => setHideApplied(e.target.checked)}
+          />
+          Hide applied
+        </label>
+        {anyFilterOn && (
           <button
             className="btn ghost"
             onClick={() => {
               setExpFilter("all");
               setTypeFilter("all");
+              setPostedFilter("all");
+              setVisaFilter("all");
+              setMinMatch(0);
+              setHideApplied(false);
             }}
           >
             Clear filters
           </button>
+        )}
+        {undatedCount > 0 && (
+          <span className="sub" title="These roles have no posting date, so a date filter can't include them">
+            {undatedCount} undated hidden
+          </span>
         )}
         {data?.source && <span className="sub">{data.source}</span>}
       </div>
@@ -473,6 +711,23 @@ export default function Page() {
                         <p className="role">{m.title}</p>
                         <p className="loc">
                           📍 {m.location} · {m.sector} · {m.exp} · {m.type}
+                          {postedAgo(m.updatedAt) && (
+                            <>
+                              {" · "}
+                              <span
+                                className={
+                                  (Date.now() - new Date(m.updatedAt)) / 86400000 <= 7
+                                    ? "freshtag"
+                                    : ""
+                                }
+                              >
+                                🕒 {postedAgo(m.updatedAt)}
+                              </span>
+                            </>
+                          )}
+                          {salaryLabel(m.salaryMin, m.salaryMax) && (
+                            <> · 💰 {salaryLabel(m.salaryMin, m.salaryMax)}</>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -525,7 +780,12 @@ export default function Page() {
                   <div className="statusRow">
                     <select
                       value={t.status}
-                      onChange={(e) => update(m.company, { status: e.target.value }, true)}
+                      onChange={(e) =>
+                        update(m.company, { status: e.target.value }, true, {
+                          title: m.title,
+                          url: m.url,
+                        })
+                      }
                     >
                       {STATUSES.map((s) => (
                         <option key={s} value={s}>

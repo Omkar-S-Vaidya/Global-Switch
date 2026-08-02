@@ -4,6 +4,9 @@
 // viewer's local time. All timezone math uses the Intl API (no dependencies).
 
 export const COUNTRY_TZ = {
+  // "remote" is deliberately absent — a distributed team has no single local
+  // morning, so bestApplyTime() returns null and the banner is hidden.
+  netherlands: "Europe/Amsterdam",
   singapore: "Asia/Singapore",
   india: "Asia/Kolkata",
   us: "America/New_York",

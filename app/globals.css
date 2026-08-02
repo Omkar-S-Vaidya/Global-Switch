@@ -576,3 +576,170 @@ footer.foot { margin-top: 32px; color: var(--faint); font-size: 12px; text-align
   .links { grid-template-columns: 1fr; }
   .navlink span:not(.navlabel) { font-size: 15px; }
 }
+
+/* ================================================================
+   Company database (/companies) + Pipeline (/pipeline)
+   ================================================================ */
+
+button.btn.primary { background: var(--accent); }
+button.btn.sm { padding: 6px 11px; font-size: 12.5px; }
+
+/* Maintenance actions: seed / probe / check */
+.syncbar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 12px 14px; margin: 16px 0 4px; box-shadow: var(--shadow-sm);
+}
+.syncprogress { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+
+/* Inline "add a row" forms on both pages */
+.addform {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px 14px; margin-top: 10px;
+}
+.addform input, .addform select {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: 10px; padding: 8px 11px; font-size: 13.5px; font-family: inherit;
+  flex: 1 1 150px; min-width: 0;
+}
+.addform input:focus, .addform select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.checkfilter {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px;
+  font-weight: 600; color: var(--muted); cursor: pointer; user-select: none;
+}
+.checkfilter input { accent-color: var(--accent); width: 15px; height: 15px; }
+
+/* Dense row list — better than cards for a few hundred companies */
+.colist { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.corow {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 11px 14px; box-shadow: var(--shadow-sm);
+}
+.corow:hover { border-color: var(--border-strong); }
+.corow.isnew { border-color: #bfe8d0; background: linear-gradient(90deg, var(--green-soft) 0%, var(--surface) 30%); }
+.corow .mono { width: 36px; height: 36px; border-radius: 10px; font-size: 15px; }
+.corow .co { font-size: 14.5px; gap: 7px; }
+.corow .co a { text-decoration: none; color: inherit; }
+.corow .co a:hover { color: var(--accent); }
+.coinfo { flex: 1 1 200px; min-width: 0; }
+.coinfo p { margin: 0; }
+.cometa { display: flex; align-items: center; gap: 7px; flex: 0 1 auto; flex-wrap: wrap; }
+.colinks { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; }
+
+/* Rejected / closed applications recede */
+.corow.st-rejected, .corow.st-ghosted { opacity: .55; }
+.corow.st-interview { border-color: #f0d9a8; }
+.corow.st-offer { border-color: #bfe8d0; }
+
+.pill.live { background: var(--green-soft); color: var(--green); }
+.pill.dim { background: var(--bg-soft); color: var(--faint); }
+
+.newbadge {
+  font-size: 10.5px; font-weight: 800; color: #fff; background: var(--green);
+  padding: 2px 8px; border-radius: 999px; letter-spacing: .2px;
+}
+.newdot {
+  display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 800;
+  color: #fff; background: var(--green); padding: 1px 7px; border-radius: 999px;
+}
+
+.minisel {
+  background: var(--surface); color: var(--muted); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 7px; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; max-width: 130px;
+}
+.minisel:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* Link-styled action buttons inside rows */
+.colinks .viewlink, .corow a.viewlink {
+  border: 1px solid var(--border-strong); background: var(--surface);
+  border-radius: 9px; padding: 6px 10px; text-decoration: none; cursor: pointer;
+  font-family: inherit; white-space: nowrap;
+}
+.viewlink.careers { color: var(--careers); border-color: #d6cffa; }
+.viewlink.linkedin { color: var(--linkedin); border-color: #c6d9f5; }
+.viewlink.applied { color: var(--green); border-color: #bfe8d0; }
+.viewlink.del { color: var(--faint); padding: 6px 9px; }
+.viewlink.del:hover { color: var(--red); border-color: var(--red); }
+.colinks .viewlink:hover { filter: brightness(.96); }
+
+/* ---------------- Pipeline: quota dashboard ---------------- */
+.panelhead {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-weight: 800; font-size: 15px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.quotagrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.quota {
+  border: 1px solid var(--border); border-radius: 13px; padding: 12px 13px;
+  background: var(--surface-2);
+}
+.quota.done { background: var(--green-soft); border-color: #bfe8d0; }
+.quota.now { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.quotatop { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.quotaname { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nowtag {
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--accent-ink); background: var(--accent-soft); padding: 2px 7px; border-radius: 999px;
+}
+.quotanums { display: flex; align-items: baseline; gap: 5px; margin: 6px 0 8px; }
+.quotanums b { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+.targetinput {
+  width: 52px; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 3px 6px; font-size: 13px; font-family: inherit; font-weight: 700;
+}
+.bar { height: 6px; background: var(--bg-soft); border-radius: 999px; overflow: hidden; }
+.barfill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s; }
+.quota.done .barfill { background: var(--green); }
+.quota p { margin: 7px 0 0; }
+
+/* Follow-up queue */
+.folist { display: flex; flex-direction: column; gap: 8px; }
+.forow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 12px; padding: 10px 13px;
+  background: var(--surface-2);
+}
+.forow .co { font-size: 14px; }
+
+@media (max-width: 900px) {
+  .quotagrid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 640px) {
+  .quotagrid { grid-template-columns: repeat(2, 1fr); }
+  .corow, .forow { flex-wrap: wrap; }
+  .coinfo { flex: 1 1 100%; order: 1; }
+  .corow .mono { order: 0; }
+  .cometa, .colinks { flex: 1 1 100%; order: 2; }
+  .colinks .viewlink { flex: 1 1 auto; text-align: center; }
+  .minisel { flex: 1 1 auto; max-width: none; }
+  .addform input, .addform select { flex: 1 1 100%; }
+  .addform .btn { width: 100%; }
+  .syncbar .btn { flex: 1 1 auto; }
+}
+@media (max-width: 430px) {
+  .quotagrid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .quotanums b { font-size: 20px; }
+  .quotaname { font-size: 12px; }
+}
+
+/* ---- Filters / freshness on the job board ---- */
+.freshtag { color: var(--green); font-weight: 700; }
+
+/* Profile → Jobs pointer, replacing the old duplicate "Jobs for you" tab */
+.crosslink {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; margin: 14px 0 4px;
+  background: var(--accent-soft); border: 1px solid #cdd7fb;
+  border-radius: 14px; padding: 13px 16px; font-size: 14px; color: var(--accent-ink);
+}
+.crosslink b { font-weight: 800; }
+
+@media (max-width: 640px) {
+  .crosslink { flex-direction: column; align-items: stretch; text-align: center; }
+  .crosslink .btn { width: 100%; }
+}

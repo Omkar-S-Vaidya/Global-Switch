@@ -12,6 +12,8 @@
 
 import { extractSkills } from "../../lib/skills";
 import { sql, ensureSchema } from "../../lib/db";
+import { readBoard, boardUrl, ATS_LABEL } from "../../lib/ats";
+import { FEEDS } from "../../lib/feeds";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,6 +27,27 @@ function stripHtml(s = "") {
 }
 
 export const COUNTRIES = [
+  // Everywhere at once. Company boards are fetched globally and only filtered
+  // by location afterwards, so "All" is simply that filter switched off — it
+  // costs nothing extra. The national job boards are skipped (they're per
+  // country by definition), so this is company-board coverage only.
+  { key: "all", label: "🌐 All countries", match: ".", all: true },
+  // "Remote" isn't a place, but it behaves like one here: match the location
+  // text rather than a geography, and skip the country-specific job boards
+  // (which are all national by definition). It leads the list because a remote
+  // offer is the fastest route to international experience without a visa.
+  {
+    key: "remote",
+    label: "🌍 Remote",
+    match:
+      "\\bremote\\b|work from home|\\bwfh\\b|anywhere|distributed|home.?based|worldwide|\\bglobal\\b|virtual",
+  },
+  {
+    key: "netherlands",
+    label: "🇳🇱 Netherlands",
+    match:
+      "netherlands|holland|\\bnl\\b|amsterdam|rotterdam|utrecht|the hague|den haag|eindhoven|delft|groningen|haarlem|hilversum|leiden|amstelveen|nijmegen|tilburg|almere|breda|arnhem|zwolle|maastricht|veldhoven",
+  },
   { key: "singapore", label: "🇸🇬 Singapore", match: "singapore" },
   {
     key: "india",
@@ -99,9 +122,12 @@ const ADZUNA_COUNTRY = {
   canada: "ca",
   germany: "de",
   switzerland: "ch",
+  netherlands: "nl",
 };
 
-// Global Greenhouse boards: [ name, token, tier, sector ]. Live in every country.
+// Fallback board list: [ name, token, tier, sector ]. Used only until the
+// company database is seeded — after that, boards come from `companies` (any
+// ATS, not just Greenhouse) so the list grows without a code change.
 const GH_COMPANIES = [
   ["Stripe", "stripe", "big-mnc", "Fintech"],
   ["Datadog", "datadog", "big-mnc", "Observability"],
@@ -167,7 +193,11 @@ function parseExp(t = "") {
     return "lead";
   if (/\bsenior\b|\bsr\.?\b/i.test(t)) return "senior";
   if (/\bjunior\b|\bjr\.?\b|\bassociate\b|entry.level|\bgraduate\b/i.test(t)) return "junior";
-  return "mid";
+  if (/\bmid.?level\b|\bmid.?senior\b|\bII\b|\b2\b/.test(t)) return "mid";
+  // A title with no seniority word tells us nothing. Calling that "mid" made
+  // the mid-level filter mostly noise (a third of all roles landed there by
+  // default), so unlabelled roles get their own bucket instead.
+  return "unknown";
 }
 function parseType(t = "") {
   if (/\bintern(ship)?\b/i.test(t)) return "internship";
@@ -209,30 +239,47 @@ async function pool(items, limit, worker) {
   return out;
 }
 
-// Cache raw (eng-filtered) Greenhouse jobs per token so switching country is free.
+// Cache raw (eng-filtered) board jobs per company so switching country is free.
 let RAW = { ts: 0, map: null };
 const TTL = 10 * 60 * 1000;
 
-async function rawGreenhouse() {
+// How many boards to read per refresh. Every company in the database with a
+// confirmed ATS token is a candidate; the cap keeps one request bounded.
+const MAX_BOARDS = 110;
+
+// The company database is the source of truth for which boards to read. Falls
+// back to the built-in list when the table is empty (fresh install) or the DB
+// is unreachable, so the board never goes blank.
+async function boardCompanies() {
+  try {
+    await ensureSchema();
+    const rows = await sql`
+      SELECT name, bucket, sector, tier, ats, ats_token, site, visa, remote
+      FROM companies
+      WHERE active = true AND ats IS NOT NULL AND ats_token IS NOT NULL
+      ORDER BY open_roles DESC, id ASC
+      LIMIT ${MAX_BOARDS}
+    `;
+    if (rows.length) return rows;
+  } catch {
+    // fall through to the built-in list
+  }
+  return GH_COMPANIES.map(([name, token, tier, sector]) => ({
+    name,
+    tier,
+    sector,
+    ats: "greenhouse",
+    ats_token: token,
+    site: null,
+  }));
+}
+
+async function rawBoards() {
   if (RAW.map && Date.now() - RAW.ts < TTL) return RAW.map;
-  const results = await pool(GH_COMPANIES, 8, async ([name, token]) => {
-    // content=true returns full descriptions so we can extract skills server-side.
-    const data = await getJson(
-      `https://boards-api.greenhouse.io/v1/boards/${token}/jobs?content=true`
-    );
-    const jobs = (data.jobs || [])
-      .filter((j) => ENG.test(j.title || ""))
-      .map((j) => {
-        const text = (j.title || "") + " " + stripHtml(j.content || "");
-        return {
-          title: j.title,
-          location: j.location?.name || "",
-          url: j.absolute_url,
-          updated_at: j.updated_at || null,
-          skills: extractSkills(text), // skill keys only — description discarded
-        };
-      });
-    return [name, { token, jobs }];
+  const companies = await boardCompanies();
+  const results = await pool(companies, 8, async (c) => {
+    const jobs = (await readBoard(c.ats, c.ats_token)).filter((j) => ENG.test(j.title || ""));
+    return [c.name, { company: c, jobs }];
   });
   const map = new Map(results.filter(Boolean));
   RAW = { ts: Date.now(), map };
@@ -355,6 +402,11 @@ function groupAndMerge(byName, jobs, platform, countryName) {
         roles,
         role: list[0].title,
         location: list[0].location || countryName,
+        // Aggregator results aren't in the company database, so there's nothing
+        // to say about sponsorship or work mode for them.
+        bucket: null,
+        visa: "unknown",
+        workMode: "unknown",
         platform,
         platformUrl: list[0].url,
         boardUrl: null,
@@ -617,62 +669,94 @@ async function fetchExtraSources(countryKey, countryName) {
     tasks.push(
       withCache(`jooble:${countryKey}`, () => joobleCached(countryKey, countryName)).then((l) => add("Jooble", l))
     );
+
+  // Keyless public feeds. These carry the Remote bucket, which has no national
+  // job board to fall back on, and give Germany the descriptions Arbeitsagentur
+  // omits.
+  for (const feed of FEEDS) {
+    if (!feed.countries.includes(countryKey)) continue;
+    // Feeds are general job boards, so the engineering filter is applied here
+    // rather than trusting each source's own category parameter.
+    tasks.push(
+      withCache(`feed:${feed.key}`, feed.fetch).then((l) =>
+        add(feed.label, l.filter((j) => ENG.test(j.title || "")))
+      )
+    );
+  }
+
   await Promise.allSettled(tasks);
   return collected;
 }
 
 export async function GET(request) {
   const url = new URL(request.url);
-  const countryKey = url.searchParams.get("country") || "singapore";
+  const countryKey = url.searchParams.get("country") || "remote";
   const country = COUNTRIES.find((c) => c.key === countryKey) || COUNTRIES[0];
   const countryName = country.label.replace(/^[^\w]+/, "").trim();
+  // Deep-search links take a location; "All countries" isn't one, so those
+  // searches go out unscoped rather than literally searching for that phrase.
+  const searchIn = country.all ? "" : countryName;
   const matcher = new RegExp(country.match, "i");
 
-  // Fetch Greenhouse + all applicable extra sources concurrently; each degrades
-  // to empty independently on failure.
+  // Fetch every company board + all applicable extra sources concurrently; each
+  // degrades to empty independently on failure.
   const [raw, extras] = await Promise.all([
-    rawGreenhouse().catch(() => new Map()),
-    fetchExtraSources(country.key, countryName).catch(() => []),
+    rawBoards().catch(() => new Map()),
+    // Only "All countries" skips the extra sources. Remote has no geography and
+    // so no national job board, but it does have its own remote-first feeds —
+    // and those are what make that bucket worth using.
+    country.all
+      ? Promise.resolve([])
+      : fetchExtraSources(country.key, countryName).catch(() => []),
   ]);
 
   const byName = new Map();
 
-  // 1) Global Greenhouse companies, filtered to the selected country (live).
-  for (const [name, , tier, sector] of GH_COMPANIES) {
-    const rec = raw.get(name);
-    const sg = (rec?.jobs || []).filter((j) => matcher.test(j.location));
-    if (!sg.length) continue; // only surface a global board where it hires in this country
-    sg.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-    const roles = sg.slice(0, 60).map((j) => ({
+  // 1) Company-database boards (any ATS), filtered to the selected country.
+  for (const [name, rec] of raw) {
+    const c = rec?.company || {};
+    // "All countries" keeps every posting; the others filter on location text.
+    const hits = country.all
+      ? rec?.jobs || []
+      : (rec?.jobs || []).filter((j) => matcher.test(j.location || ""));
+    if (!hits.length) continue; // only surface a board where it hires in this country
+    hits.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0));
+    const roles = hits.slice(0, 60).map((j) => ({
       title: j.title,
       url: j.url,
       location: j.location,
       exp: parseExp(j.title),
-      type: parseType(j.title),
+      type: j.type || parseType(j.title),
       skills: j.skills || [],
-      salaryMin: null,
-      salaryMax: null,
-      updatedAt: j.updated_at || null,
+      salaryMin: j.salaryMin ?? null,
+      salaryMax: j.salaryMax ?? null,
+      updatedAt: j.created || null,
     }));
     byName.set(name, {
       company: name,
-      category: tier,
-      sector,
-      openRoles: sg.length,
+      category: c.tier || "growing-mnc",
+      sector: c.sector || hits[0].sector || "Various",
+      openRoles: hits.length,
       roles,
-      role: sg[0].title,
-      location: sg[0].location || countryName,
-      platform: "Greenhouse",
-      platformUrl: sg[0].url,
-      boardUrl: rec?.token
-        ? `https://boards.greenhouse.io/${rec.token}`
-        : careersUrl(name, countryName),
-      linkedinUrl: linkedinUrl(name, countryName),
-      careersUrl: careersUrl(name, countryName),
-      updatedAt: sg[0].updated_at || null,
+      role: hits[0].title,
+      location: hits[0].location || countryName,
+      // Company-database facts, so the board can filter on sponsorship and work
+      // mode without a second round trip.
+      bucket: c.bucket || null,
+      visa: c.visa || "unknown",
+      workMode: c.remote || "unknown",
+      platform: ATS_LABEL[c.ats] || "Greenhouse",
+      platformUrl: hits[0].url,
+      boardUrl: boardUrl(c.ats, c.ats_token, c.site) || careersUrl(name, searchIn),
+      linkedinUrl: linkedinUrl(name, searchIn),
+      careersUrl: careersUrl(name, searchIn),
+      updatedAt: hits[0].created || null,
       live: true,
     });
   }
+
+  // Which ATS platforms actually contributed, for the "source" byline.
+  const boardPlatforms = [...new Set(Array.from(byName.values()).map((c) => c.platform))];
 
   // 2) Merge every extra source (Adzuna + country-specific gov/board APIs).
   const usedSources = [];
@@ -703,7 +787,7 @@ export async function GET(request) {
     counts,
     liveCount,
     totalOpenRoles,
-    source: `${[...usedSources, "Greenhouse"].join(" + ")} live — ${liveCount} hiring, ${totalOpenRoles} open ${countryName} roles`,
+    source: `${[...new Set([...boardPlatforms, ...usedSources])].join(" + ")} live — ${liveCount} hiring, ${totalOpenRoles} open ${countryName} roles`,
     companies,
   });
 }

@@ -7,28 +7,18 @@ import Nav from "../components/Nav";
 import { fetchMe, fileToBase64 } from "../lib/client";
 import { parseResumeFile } from "../lib/parseResume";
 import { extractSkills, skillLabel, SKILLS } from "../lib/skills";
-import { STATUSES, STATUS_LABEL, EMPTY_ENTRY, loadTracker, saveTracker } from "../lib/tracker";
 import ResumeEditor from "../components/ResumeEditor";
-import ApplyTime from "../components/ApplyTime";
 
 const JOB_TYPES = ["Full-time", "Contract", "Internship", "Part-time", "Remote", "Hybrid", "On-site"];
-const PAGE_SIZE = 20;
 
 // Temporarily disabled — flip to true to re-enable.
 const RESUME_EDITOR_ENABLED = false;
 
-const initial = (name = "") => (name.trim()[0] || "?").toUpperCase();
-const monoStyle = (name = "") => {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return { background: `hsl(${h} 70% 94%)`, color: `hsl(${h} 52% 38%)` };
-};
 
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
-  const [tab, setTab] = useState("profile"); // profile | jobs
 
   // profile fields
   const [currentSalary, setCurrentSalary] = useState("");
@@ -167,17 +157,22 @@ export default function ProfilePage() {
           </p>
         </header>
 
-        <div className="segtabs">
-          <button className={tab === "profile" ? "active" : ""} onClick={() => setTab("profile")}>
-            👤 Profile
-          </button>
-          <button className={tab === "jobs" ? "active" : ""} onClick={() => setTab("jobs")}>
-            🎯 Jobs for you
-          </button>
-        </div>
+        {/* Matched roles used to live here too, on a separate skill set that
+            silently disagreed with the job board's. There is now one matcher,
+            reading these saved skills, on the Jobs page. */}
+        {skills.length > 0 && (
+          <div className="crosslink">
+            <span>
+              🎯 <b>{skills.length} skills</b> saved — the Jobs board ranks every live role
+              against them.
+            </span>
+            <button className="btn" onClick={() => router.push("/")}>
+              See matched roles →
+            </button>
+          </div>
+        )}
 
-        {tab === "profile" && (
-          <div className="panel formpanel">
+        <div className="panel formpanel">
             {/* Resume */}
             <section className="field">
               <label className="flabel">Resume</label>
@@ -310,16 +305,7 @@ export default function ProfilePage() {
                 {saving ? "Saving…" : "Save profile"}
               </button>
             </div>
-          </div>
-        )}
-
-        {tab === "jobs" && (
-          <JobsForYou
-            skills={skills}
-            jobPreference={jobPreference}
-            hasProfile={skills.length > 0}
-          />
-        )}
+        </div>
       </div>
 
       <ResumeEditor
@@ -338,215 +324,5 @@ export default function ProfilePage() {
         resumeText={resumeText}
       />
     </>
-  );
-}
-
-// ---- Jobs matched to the saved profile ----
-function JobsForYou({ skills, jobPreference, hasProfile }) {
-  const [country, setCountry] = useState("singapore");
-  const [countries, setCountries] = useState([]);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [tracker, setTracker] = useState({});
-
-  // Same per-user tracker the home board uses, keyed by company.
-  useEffect(() => {
-    loadTracker().then(setTracker);
-  }, []);
-
-  const update = (key, patch, commit = false) => {
-    setTracker((prev) => ({ ...prev, [key]: { ...(prev[key] || EMPTY_ENTRY), ...patch } }));
-    if (commit) saveTracker(key, patch);
-  };
-
-  const load = useCallback(async (key) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/jobs?country=${key}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`Server error (${res.status})`);
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "Failed to load");
-      setData(json);
-      if (json.countries) setCountries(json.countries);
-    } catch (e) {
-      setError(e.message);
-      toast.error("Couldn't load jobs: " + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load(country);
-    setPage(1);
-  }, [country, load]);
-
-  const skillSet = useMemo(() => new Set(skills), [skills]);
-  const prefTerms = useMemo(
-    () =>
-      (jobPreference || "")
-        .toLowerCase()
-        .split(/[,/]+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 2),
-    [jobPreference]
-  );
-
-  const matched = useMemo(() => {
-    if (!data?.companies) return [];
-    const out = [];
-    for (const c of data.companies) {
-      for (const r of c.roles || []) {
-        const matchedSkills = (r.skills || []).filter((s) => skillSet.has(s));
-        const prefHit = prefTerms.some((t) => (r.title || "").toLowerCase().includes(t));
-        if (!matchedSkills.length && !prefHit) continue;
-        const missing = (r.skills || []).filter((s) => !skillSet.has(s));
-        const reqPct = r.skills?.length
-          ? Math.round((matchedSkills.length / r.skills.length) * 100)
-          : 0;
-        out.push({
-          company: c.company,
-          sector: c.sector,
-          title: r.title,
-          url: r.url,
-          location: r.location,
-          exp: r.exp,
-          type: r.type,
-          score: matchedSkills.length + (prefHit ? 0.5 : 0),
-          reqPct,
-          matched: matchedSkills,
-          missing,
-          prefHit,
-        });
-      }
-    }
-    out.sort((a, b) => b.score - a.score || b.reqPct - a.reqPct);
-    return out;
-  }, [data, skillSet, prefTerms]);
-
-  const totalPages = Math.max(1, Math.ceil(matched.length / PAGE_SIZE));
-  const pageItems = matched.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  if (!hasProfile) {
-    return (
-      <div className="panel">
-        <div className="empty">
-          Add some skills to your profile first — then we&apos;ll match live roles to you.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div className="jobbar">
-        <select className="filter" value={country} onChange={(e) => setCountry(e.target.value)}>
-          {(countries.length ? countries : [{ key: "singapore", label: "🇸🇬 Singapore" }]).map((c) => (
-            <option key={c.key} value={c.key}>{c.label}</option>
-          ))}
-        </select>
-        <span className="muted small">
-          {loading ? "Matching…" : `${matched.length} roles matched to your profile`}
-        </span>
-      </div>
-
-      <ApplyTime
-        country={country}
-        countryLabel={countries.find((c) => c.key === country)?.label}
-      />
-
-      {error && <div className="error">Couldn&apos;t load jobs: {error}</div>}
-
-      {loading && <div className="loading">Matching live roles…</div>}
-
-      {!loading && (
-      <div className="grid">
-        {pageItems.map((m, i) => {
-          const t = tracker[m.company] || EMPTY_ENTRY;
-          return (
-            <div key={m.company + m.title + i} className={`card ${t.status}`}>
-              <div className="cardtop">
-                <div className="cardhead">
-                  <span className="mono" style={monoStyle(m.company)}>{initial(m.company)}</span>
-                  <div className="cardheadtext">
-                    <p className="co">{m.company}</p>
-                    <p className="role">{m.title}</p>
-                    <p className="loc">📍 {m.location} · {m.sector} · {m.exp} · {m.type}</p>
-                  </div>
-                </div>
-                <div className="cardtags">
-                  <span className="fitpill">{m.score >= 1 ? `${Math.round(m.score)} skill match` : "preference"} · {m.reqPct}%</span>
-                  <span className={`pill ${t.status}`}>{STATUS_LABEL[t.status]}</span>
-                </div>
-              </div>
-              {m.matched.length > 0 && (
-                <div className="chipwrap small">
-                  {m.matched.map((s) => (
-                    <span key={s} className="skill on static">✓ {skillLabel(s)}</span>
-                  ))}
-                </div>
-              )}
-              {m.missing.length > 0 && (
-                <div className="gaprow">
-                  <span className="gaplabel">Missing ({m.missing.length}):</span>
-                  <div className="chipwrap small">
-                    {m.missing.map((s) => (
-                      <span key={s} className="skill miss static">✗ {skillLabel(s)}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="links">
-                <a className="lnk pl" href={m.url} target="_blank" rel="noreferrer">🚀 Apply</a>
-                <a
-                  className="lnk li"
-                  href={`https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(m.company + " " + m.title)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  in LinkedIn
-                </a>
-              </div>
-              <div className="statusRow">
-                <select value={t.status} onChange={(e) => update(m.company, { status: e.target.value }, true)}>
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                  ))}
-                </select>
-                <input
-                  className="resumever"
-                  placeholder="Resume version"
-                  value={t.resume}
-                  onChange={(e) => update(m.company, { resume: e.target.value })}
-                  onBlur={(e) => saveTracker(m.company, { resume: e.target.value })}
-                />
-                <input
-                  className="notes"
-                  placeholder="Notes (recruiter, referral, follow-up…)"
-                  value={t.notes}
-                  onChange={(e) => update(m.company, { notes: e.target.value })}
-                  onBlur={(e) => saveTracker(m.company, { notes: e.target.value })}
-                />
-              </div>
-            </div>
-          );
-        })}
-        {pageItems.length === 0 && (
-          <div className="empty"><b>No data found.</b><br />No live roles match your profile in this country yet — try another country.</div>
-        )}
-      </div>
-      )}
-
-      {!loading && totalPages > 1 && (
-        <div className="pager">
-          <button className="btn ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹ Prev</button>
-          <span className="muted small">Page {page} / {totalPages}</span>
-          <button className="btn ghost" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next ›</button>
-        </div>
-      )}
-    </div>
   );
 }
