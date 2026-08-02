@@ -13,7 +13,8 @@
 import { extractSkills } from "../../lib/skills";
 import { sql, ensureSchema } from "../../lib/db";
 import { readBoard, boardUrl, ATS_LABEL } from "../../lib/ats";
-import { FEEDS } from "../../lib/feeds";
+import { FEEDS, enrichFeed } from "../../lib/feeds";
+import { rememberDescription } from "../../lib/descCache";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -377,17 +378,22 @@ function groupAndMerge(byName, jobs, platform, countryName) {
   }
   for (const [name, list] of grouped) {
     list.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0));
-    const roles = list.slice(0, 60).map((j) => ({
-      title: j.title,
-      url: j.url,
-      location: j.location,
-      exp: parseExp(j.title),
-      type: j.type || parseType(j.title),
-      skills: j.skills || [],
-      salaryMin: j.salaryMin ?? null,
-      salaryMax: j.salaryMax ?? null,
-      updatedAt: j.created || null,
-    }));
+    const roles = list.slice(0, 60).map((j) => {
+      rememberDescription(j.url, j.desc);
+      return {
+        title: j.title,
+        url: j.url,
+        location: j.location,
+        exp: parseExp(j.title),
+        type: j.type || parseType(j.title),
+        skills: j.skills || [],
+        salaryMin: j.salaryMin ?? null,
+        salaryMax: j.salaryMax ?? null,
+        minYears: j.minYears ?? null,
+        hasDesc: !!j.desc,
+        updatedAt: j.created || null,
+      };
+    });
     const existing = byName.get(name);
     if (existing) {
       const seen = new Set(existing.roles.map((r) => r.url));
@@ -679,7 +685,7 @@ async function fetchExtraSources(countryKey, countryName) {
     // rather than trusting each source's own category parameter.
     tasks.push(
       withCache(`feed:${feed.key}`, feed.fetch).then((l) =>
-        add(feed.label, l.filter((j) => ENG.test(j.title || "")))
+        add(feed.label, enrichFeed(l.filter((j) => ENG.test(j.title || ""))))
       )
     );
   }
@@ -721,17 +727,24 @@ export async function GET(request) {
       : (rec?.jobs || []).filter((j) => matcher.test(j.location || ""));
     if (!hits.length) continue; // only surface a board where it hires in this country
     hits.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0));
-    const roles = hits.slice(0, 60).map((j) => ({
-      title: j.title,
-      url: j.url,
-      location: j.location,
-      exp: parseExp(j.title),
-      type: j.type || parseType(j.title),
-      skills: j.skills || [],
-      salaryMin: j.salaryMin ?? null,
-      salaryMax: j.salaryMax ?? null,
-      updatedAt: j.created || null,
-    }));
+    const roles = hits.slice(0, 60).map((j) => {
+      rememberDescription(j.url, j.desc);
+      return {
+        title: j.title,
+        url: j.url,
+        location: j.location,
+        exp: parseExp(j.title),
+        type: j.type || parseType(j.title),
+        skills: j.skills || [],
+        salaryMin: j.salaryMin ?? null,
+        salaryMax: j.salaryMax ?? null,
+        minYears: j.minYears ?? null,
+        // `hasDesc` lets the card show an expander only where there's something
+        // to expand, without shipping the text itself.
+        hasDesc: !!j.desc,
+        updatedAt: j.created || null,
+      };
+    });
     byName.set(name, {
       company: name,
       category: c.tier || "growing-mnc",

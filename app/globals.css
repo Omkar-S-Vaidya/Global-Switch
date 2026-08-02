@@ -938,3 +938,64 @@ body {
   font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: .07em; display: block; margin-bottom: 8px;
 }
+
+/* -------------------------- inline job description ------------------------ */
+/* Fetched on demand from /api/jobs/detail — the list payload carries only a
+   `hasDesc` flag, because inlining every description would take the response
+   from ~735 KB to roughly 12 MB. */
+
+.descblock { margin-top: 12px; }
+.descbtn {
+  background: none; border: 0; cursor: pointer; padding: 0;
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+}
+.descbtn:hover { color: var(--accent); }
+.desctext {
+  margin-top: 9px; padding: 12px 14px; max-height: 320px; overflow-y: auto;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 2px solid var(--accent); border-radius: var(--r-sm);
+  font-size: 12.5px; line-height: 1.65; color: var(--muted);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* ------------------------- inline role list on a card --------------------- */
+/* A company card used to show one role and link out for the rest — including
+   for any description at all. The roles now live in the card. */
+
+.rolelist {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.rolerow {
+  padding: 11px 12px; margin-top: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.rolerow:first-of-type { margin-top: 8px; }
+.roletitle {
+  font-size: 13.5px; font-weight: 600; color: var(--text);
+  letter-spacing: -.01em; display: inline-block;
+}
+.roletitle:hover { color: var(--accent); text-decoration: none; }
+.rolerow .loc { margin: 4px 0 0; }
+.rolerow .skillchips { margin-top: 8px; }
+.rolerow .descbtn { margin-top: 9px; }
+.rolerow .desctext { max-height: 260px; }
+
+/* Clamped preview + "show full". A description runs several thousand
+   characters; opening one in full would push the next role off the screen. */
+.desctext.clamped { position: relative; max-height: 132px; overflow: hidden; }
+.desctext.clamped::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+  background: linear-gradient(to bottom, transparent, var(--surface-2));
+  pointer-events: none;
+}
+.descmore {
+  margin-top: 7px; background: none; border: 0; cursor: pointer; padding: 0;
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .05em; color: var(--accent);
+}
+.descmore:hover { text-decoration: underline; }
+.nodesc { margin: 12px 0 0; font-style: italic; }

@@ -11,8 +11,49 @@ import { parseResumeFile } from "./lib/parseResume";
 import { STATUSES, STATUS_LABEL as LABEL, EMPTY_ENTRY, loadTracker, saveTracker } from "./lib/tracker";
 import { BUCKET_KEYS } from "./lib/buckets";
 import { todayLocal, addDays, FOLLOW_UP_DAYS } from "./lib/dates";
+import { YEAR_FILTERS, matchesYears } from "./lib/experience";
 
 const PAGE_SIZE = 20;
+
+// A collapsible job description. Shared by both views so the matches list and
+// the company role rows can't drift apart.
+//
+// Descriptions run to several thousand characters; dumping one in full pushes
+// the next role off the screen. It opens clamped to a readable preview with a
+// fade, and "Show full description" lifts the clamp.
+function Description({ url, hasDesc, platform, state, onToggle }) {
+  const [full, setFull] = useState(false);
+  const open = state !== undefined;
+  const text = state;
+
+  if (!hasDesc) {
+    return (
+      <p className="small muted nodesc">
+        No description from {platform || "this source"} — open the posting to read it.
+      </p>
+    );
+  }
+
+  return (
+    <div className="descblock">
+      <button className="descbtn" onClick={() => onToggle(url)} aria-expanded={open}>
+        {open ? "▾" : "▸"} Job description
+      </button>
+      {open && (
+        <>
+          <div className={`desctext ${full ? "" : "clamped"}`}>
+            {text === null ? "Loading…" : text}
+          </div>
+          {text && text.length > 400 && (
+            <button className="descmore" onClick={() => setFull((v) => !v)}>
+              {full ? "Show less ↑" : "Show full description ↓"}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // "3d ago" / "2mo ago" — how stale a posting is, at a glance.
 function postedAgo(iso) {
@@ -77,6 +118,13 @@ export default function Page() {
   const [minMatch, setMinMatch] = useState(0);
   const [hideApplied, setHideApplied] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [yearsFilter, setYearsFilter] = useState("all");
+  // Fetched one at a time from /api/jobs/detail; null = loading, "" = no text.
+  const [openDesc, setOpenDesc] = useState({});
+  // Company cards whose full role list is expanded, plus which ones have been
+  // "show all"-ed past the initial slice.
+  const [openRoles, setOpenRoles] = useState({});
+  const [showAllRoles, setShowAllRoles] = useState({});
   // Company names + role URLs already logged in the pipeline, so applied roles
   // can drop out of the list instead of being re-read every morning.
   const [appliedKeys, setAppliedKeys] = useState({ urls: new Set(), companies: new Set() });
@@ -211,6 +259,7 @@ export default function Page() {
       return roles.filter((r) => {
         if (expFilter !== "all" && r.exp !== expFilter) return false;
         if (typeFilter !== "all" && r.type !== typeFilter) return false;
+        if (!matchesYears(r.minYears, yearsFilter)) return false;
         if (cutoff !== null) {
           if (!r.updatedAt) return false;
           if (new Date(r.updatedAt).getTime() < cutoff) return false;
@@ -218,7 +267,43 @@ export default function Page() {
         return true;
       });
     },
-    [expFilter, typeFilter, postedFilter]
+    [expFilter, typeFilter, postedFilter, yearsFilter]
+  );
+
+  // Only 44% of postings state a years requirement, so the filter reports what
+  // it couldn't read rather than quietly hiding it.
+  const noYearsCount = useMemo(() => {
+    if (!data?.companies) return 0;
+    let n = 0;
+    for (const c of data.companies) for (const r of c.roles || []) if (r.minYears == null) n++;
+    return n;
+  }, [data]);
+
+  const loadDescription = useCallback(async (url) => {
+    setOpenDesc((p) => ({ ...p, [url]: null })); // null renders the spinner
+    try {
+      const res = await fetch(`/api/jobs/detail?url=${encodeURIComponent(url)}`, {
+        cache: "no-store",
+      });
+      const j = await res.json();
+      setOpenDesc((p) => ({ ...p, [url]: j.found ? j.description : (j.reason || "") }));
+    } catch {
+      setOpenDesc((p) => ({ ...p, [url]: "Couldn't load the description." }));
+    }
+  }, []);
+
+  const toggleDescription = useCallback(
+    (url) => {
+      setOpenDesc((p) => {
+        if (url in p) {
+          const { [url]: _drop, ...rest } = p;
+          return rest;
+        }
+        return p;
+      });
+      if (!(url in openDesc)) loadDescription(url);
+    },
+    [openDesc, loadDescription]
   );
 
   // How many roles the freshness filter is dropping purely for lacking a date —
@@ -418,6 +503,10 @@ export default function Page() {
           type: r.type,
           salaryMin: r.salaryMin ?? null,
           salaryMax: r.salaryMax ?? null,
+          // These two were missing, so the years badge and the whole
+          // description expander evaluated falsy and rendered nothing here.
+          minYears: r.minYears ?? null,
+          hasDesc: !!r.hasDesc,
           score: matched.length,
           reqPct,
           matched,
@@ -645,6 +734,18 @@ export default function Page() {
           <option value="lead">Lead / Staff / Principal</option>
           <option value="unknown">Unspecified</option>
         </select>
+        <select
+          className="filter"
+          value={yearsFilter}
+          onChange={(e) => setYearsFilter(e.target.value)}
+          title="Read from the job description — 44% of postings state one"
+        >
+          {YEAR_FILTERS.map((y) => (
+            <option key={y.key} value={y.key}>
+              {y.key === "all" ? y.label : `🎓 ${y.label}`}
+            </option>
+          ))}
+        </select>
         <select className="filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="all">Any job type</option>
           <option value="fulltime">Full-time</option>
@@ -704,6 +805,14 @@ export default function Page() {
             {undatedCount} undated hidden
           </span>
         )}
+        {yearsFilter !== "all" && yearsFilter !== "none" && noYearsCount > 0 && (
+          <span
+            className="sub"
+            title="These postings don't state a years requirement, so they can't be matched against one"
+          >
+            {noYearsCount} state no requirement
+          </span>
+        )}
         {data?.source && <span className="sub">{data.source}</span>}
       </div>
 
@@ -760,6 +869,7 @@ export default function Page() {
                           {salaryLabel(m.salaryMin, m.salaryMax) && (
                             <> · 💰 {salaryLabel(m.salaryMin, m.salaryMax)}</>
                           )}
+                          {m.minYears != null && <> · 🎓 {m.minYears}+ yrs</>}
                         </p>
                       </div>
                     </div>
@@ -794,6 +904,14 @@ export default function Page() {
                       )}
                     </div>
                   )}
+                  <Description
+                    url={m.url}
+                    hasDesc={m.hasDesc}
+                    platform={m.platform}
+                    state={m.url in openDesc ? openDesc[m.url] : undefined}
+                    onToggle={toggleDescription}
+                  />
+
                   <div className="links">
                     <a className="lnk pl" href={m.url} target="_blank" rel="noreferrer">
                       🚀 Apply (open role)
@@ -855,6 +973,12 @@ export default function Page() {
             const shownCount = filtersActive ? co.visRoles : co.openRoles;
             const shownRole = filtersActive ? co.visRole : co.role;
             const applyUrl = filtersActive ? co.visApplyUrl : co.platformUrl;
+            // Respect the active filters here too, so expanding a card can't
+            // reveal roles the filters were meant to exclude.
+            const companyRoles = matchRoles(co.roles || []);
+            const visibleRoles = showAllRoles[co.company]
+              ? companyRoles
+              : companyRoles.slice(0, 8);
             return (
               <div key={co.company} className={`card ${t.status}`}>
                 <div className="cardtop">
@@ -882,6 +1006,80 @@ export default function Page() {
                   </div>
                   <span className={`pill ${t.status}`}>{LABEL[t.status]}</span>
                 </div>
+
+                {/* Every open role, in place. Previously the card showed one
+                    role and sent you off-site for the rest — and for any
+                    description at all. */}
+                {co.live && companyRoles.length > 0 && (
+                  <div className="rolelist">
+                    <button
+                      className="descbtn"
+                      onClick={() =>
+                        setOpenRoles((p) => ({ ...p, [co.company]: !p[co.company] }))
+                      }
+                      aria-expanded={!!openRoles[co.company]}
+                    >
+                      {openRoles[co.company] ? "▾" : "▸"}{" "}
+                      {/* The API caps each company's role list at 60. Saying
+                          "60 open roles" next to a "160 roles" badge would just
+                          look broken, so name the cap. */}
+                      {companyRoles.length < shownCount
+                        ? `${companyRoles.length} of ${shownCount} roles`
+                        : `${companyRoles.length} open role${companyRoles.length > 1 ? "s" : ""}`}
+                    </button>
+
+                    {openRoles[co.company] &&
+                      visibleRoles.map((r) => (
+                        <div className="rolerow" key={r.url}>
+                          <a
+                            className="roletitle"
+                            href={r.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {r.title}
+                          </a>
+                          <p className="loc small">
+                            📍 {r.location} · {r.exp} · {r.type}
+                            {postedAgo(r.updatedAt) && <> · 🕒 {postedAgo(r.updatedAt)}</>}
+                            {r.minYears != null && <> · 🎓 {r.minYears}+ yrs</>}
+                            {salaryLabel(r.salaryMin, r.salaryMax) && (
+                              <> · 💰 {salaryLabel(r.salaryMin, r.salaryMax)}</>
+                            )}
+                          </p>
+                          {r.skills?.length > 0 && (
+                            <div className="skillchips small">
+                              {r.skills.slice(0, 10).map((s) => (
+                                <span
+                                  key={s}
+                                  className={`chip ${resumeSet.has(s) ? "on" : ""}`}
+                                >
+                                  {resumeSet.has(s) ? "✓ " : ""}
+                                  {skillLabel(s)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <Description
+                            url={r.url}
+                            hasDesc={r.hasDesc}
+                            platform={co.platform}
+                            state={r.url in openDesc ? openDesc[r.url] : undefined}
+                            onToggle={toggleDescription}
+                          />
+                        </div>
+                      ))}
+
+                    {openRoles[co.company] && companyRoles.length > visibleRoles.length && (
+                      <button
+                        className="descbtn"
+                        onClick={() => setShowAllRoles((p) => ({ ...p, [co.company]: true }))}
+                      >
+                        + show all {companyRoles.length}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <div className="links">
                   <a className="lnk pl" href={applyUrl} target="_blank" rel="noreferrer">

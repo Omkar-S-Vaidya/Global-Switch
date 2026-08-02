@@ -11,15 +11,34 @@
 // and never throws — a feed that's down degrades to [] on its own.
 
 import { extractSkills } from "./skills";
+import { parseYears } from "./experience";
 
 const UA = { "User-Agent": "JobHuntCommandCenter/1.0", Accept: "application/json" };
 
-function stripHtml(s = "") {
+// Decode before stripping: sources that return HTML-encoded bodies would
+// otherwise leave tag names behind as literal words ("h2 strong Who we are").
+// No truncation here — callers decide, and the years requirement usually sits
+// near the END of a posting.
+function decodeEntities(s = "") {
   return s
+    .replace(/&(?:amp|#38);/gi, "&")
+    .replace(/&(?:lt|#60);/gi, "<")
+    .replace(/&(?:gt|#62);/gi, ">")
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/&(?:nbsp|#160);/gi, " ")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)));
+}
+
+function stripHtml(s = "") {
+  return decodeEntities(s)
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ")
-    .slice(0, 4000);
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function parseType(t = "") {
@@ -63,6 +82,7 @@ export async function fetchRemotive() {
       salaryMax: hi,
       type: j.job_type === "contract" ? "contract" : parseType(j.title),
       sector: j.category || "Software",
+      desc: stripHtml(j.description || ""),
       skills: extractSkills(`${j.title} ${(j.tags || []).join(" ")} ${stripHtml(j.description || "")}`),
     };
   });
@@ -82,6 +102,7 @@ export async function fetchRemoteOK() {
     salaryMax: j.salary_max || null,
     type: parseType(j.position || ""),
     sector: (j.tags || [])[0] || "Software",
+    desc: stripHtml(j.description || ""),
     skills: extractSkills(`${j.position || ""} ${(j.tags || []).join(" ")} ${stripHtml(j.description || "")}`),
   }));
 }
@@ -98,6 +119,7 @@ export async function fetchJobicy() {
     salaryMax: j.annualSalaryMax ? Number(j.annualSalaryMax) : null,
     type: parseType(`${j.jobTitle} ${(j.jobType || []).join(" ")}`),
     sector: Array.isArray(j.jobIndustry) ? j.jobIndustry[0] : j.jobIndustry || "Software",
+    desc: stripHtml(j.jobDescription || j.jobExcerpt || ""),
     skills: extractSkills(
       `${j.jobTitle} ${stripHtml(j.jobDescription || j.jobExcerpt || "")} ${j.jobLevel || ""}`
     ),
@@ -116,6 +138,7 @@ export async function fetchHimalayas() {
     salaryMax: j.maxSalary || null,
     type: parseType(j.title),
     sector: (j.categories || [])[0] || "Software",
+    desc: stripHtml(j.description || ""),
     skills: extractSkills(`${j.title} ${stripHtml(j.description || "")} ${(j.categories || []).join(" ")}`),
   }));
 }
@@ -145,6 +168,7 @@ export async function fetchArbeitnow() {
         salaryMax: null,
         type: parseType(`${j.title} ${(j.job_types || []).join(" ")}`),
         sector: (j.tags || [])[0] || "IT",
+        desc: stripHtml(j.description || ""),
         skills: extractSkills(`${j.title} ${stripHtml(j.description || "")} ${(j.tags || []).join(" ")}`),
       });
     }
@@ -155,6 +179,18 @@ export async function fetchArbeitnow() {
 
 // Every feed, with the buckets it serves. `remoteOnly` feeds are skipped for
 // country views because their postings are location-agnostic by definition.
+const DESC_CAP = 6000;
+
+// Same enrichment readBoard() applies to ATS boards, for the feed sources.
+// Scan the full text, store the capped copy — scanning the truncated version
+// dropped years-requirement coverage from 87% to 10%.
+export function enrichFeed(jobs) {
+  return jobs.map((j) => {
+    const full = j.desc || "";
+    return { ...j, minYears: parseYears(`${j.title} ${full}`), desc: full.slice(0, DESC_CAP) };
+  });
+}
+
 export const FEEDS = [
   { key: "remotive", label: "Remotive", fetch: fetchRemotive, countries: ["remote"] },
   { key: "remoteok", label: "RemoteOK", fetch: fetchRemoteOK, countries: ["remote"] },

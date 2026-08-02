@@ -13,6 +13,7 @@
 // among Dutch employers, and Personio among German ones.
 
 import { extractSkills } from "./skills";
+import { parseYears } from "./experience";
 
 // Order matters: probing stops at the first hit, and Workday is deliberately
 // last because it's the only one that needs a 3-part token guessed by brute
@@ -47,12 +48,31 @@ export const ATS_LABEL = {
 const WD_DCS = ["wd3", "wd5", "wd1"];
 const WD_SITES = ["External", "Careers", "Jobs", "jobs-and-careers"];
 
-function stripHtml(s = "") {
+// Order matters. Greenhouse returns the body HTML-ENCODED (`&lt;h2&gt;`), so
+// stripping tags before decoding leaves the tag names behind as literal words —
+// descriptions came out reading "h2 strong Who we are /strong /h2". Decode
+// first, then strip. No truncation here either: callers decide how much to
+// keep, and the years requirement usually sits near the END of a posting.
+function decodeEntities(s = "") {
   return s
+    .replace(/&(?:amp|#38);/gi, "&")
+    .replace(/&(?:lt|#60);/gi, "<")
+    .replace(/&(?:gt|#62);/gi, ">")
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/&(?:nbsp|#160);/gi, " ")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)));
+}
+
+function stripHtml(s = "") {
+  return decodeEntities(s)
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ")
-    .slice(0, 4000);
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function parseType(t = "") {
@@ -128,6 +148,7 @@ async function readGreenhouse(token) {
     salaryMax: null,
     type: parseType(j.title),
     sector: null,
+    desc: stripHtml(j.content || ""),
     skills: extractSkills(`${j.title} ${stripHtml(j.content || "")}`),
   }));
 }
@@ -143,6 +164,7 @@ async function readLever(token) {
     salaryMax: null,
     type: parseType(`${j.text} ${j.categories?.commitment || ""}`),
     sector: j.categories?.team || null,
+    desc: j.descriptionPlain || stripHtml(j.description || ""),
     skills: extractSkills(`${j.text} ${j.descriptionPlain || stripHtml(j.description || "")}`),
   }));
 }
@@ -162,6 +184,7 @@ async function readAshby(token) {
       salaryMax: comp.maxValue ?? null,
       type: parseType(`${j.title} ${j.employmentType || ""}`),
       sector: j.department || j.team || null,
+      desc: j.descriptionPlain || stripHtml(j.descriptionHtml || ""),
       skills: extractSkills(`${j.title} ${j.descriptionPlain || ""} ${j.department || ""}`),
     };
   });
@@ -178,6 +201,7 @@ async function readRecruitee(token) {
     salaryMax: j.max_salary ?? null,
     type: parseType(`${j.title} ${j.employment_type_code || ""}`),
     sector: j.department || null,
+    desc: `${stripHtml(j.description || "")} ${stripHtml(j.requirements || "")}`.trim(),
     skills: extractSkills(
       `${j.title} ${stripHtml(j.description || "")} ${stripHtml(j.requirements || "")}`
     ),
@@ -197,6 +221,7 @@ async function readSmartRecruiters(token) {
     salaryMax: null,
     type: parseType(`${j.name} ${j.typeOfEmployment?.label || ""}`),
     sector: j.department?.label || j.function?.label || null,
+    desc: "", // SmartRecruiters keeps the body behind a per-job detail call
     skills: extractSkills(`${j.name} ${j.department?.label || ""}`),
   }));
 }
@@ -214,6 +239,7 @@ async function readWorkable(token) {
     salaryMax: null,
     type: parseType(`${j.title} ${j.employment_type || ""}`),
     sector: j.department || null,
+    desc: `${stripHtml(j.description || "")} ${stripHtml(j.requirements || "")}`.trim(),
     skills: extractSkills(`${j.title} ${stripHtml(j.description || "")} ${stripHtml(j.requirements || "")}`),
   }));
 }
@@ -246,6 +272,7 @@ async function readPersonio(token) {
       salaryMax: null,
       type: parseType(`${title} ${xmlTag(b, "employmentType")}`),
       sector: xmlTag(b, "department") || null,
+      desc: stripHtml(b),
       skills: extractSkills(`${title} ${stripHtml(b)}`),
     };
   });
@@ -301,6 +328,7 @@ async function readWorkday(token, { pages = 3 } = {}) {
           salaryMax: null,
           type: parseType(j.title),
           sector: null,
+          desc: "", // Workday's list endpoint returns titles only
           skills: extractSkills(j.title),
         });
       }
@@ -325,12 +353,27 @@ const READERS = {
 
 // Read one board. Returns [] rather than throwing so one dead token can never
 // take down a whole country's feed.
+// Cached description text is capped so a long-lived process can't accumulate
+// tens of MB. The years scan runs on the FULL text first, though: requirements
+// live in a "Minimum qualifications" block near the bottom of a posting, and
+// scanning the truncated copy dropped coverage from 87% to 10%.
+const DESC_CAP = 6000;
+
 export async function readBoard(ats, token, opts) {
   const reader = READERS[ats];
   if (!reader || !token) return [];
   try {
     const jobs = await reader(token, opts);
-    return jobs.filter((j) => j.title && j.url);
+    return jobs
+      .filter((j) => j.title && j.url)
+      .map((j) => {
+        const full = j.desc || "";
+        return {
+          ...j,
+          minYears: parseYears(`${j.title} ${full}`),
+          desc: full.slice(0, DESC_CAP),
+        };
+      });
   } catch {
     return [];
   }
