@@ -76,6 +76,7 @@ export default function Page() {
   const [visaFilter, setVisaFilter] = useState("all");
   const [minMatch, setMinMatch] = useState(0);
   const [hideApplied, setHideApplied] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Company names + role URLs already logged in the pipeline, so applied roles
   // can drop out of the list instead of being re-read every morning.
   const [appliedKeys, setAppliedKeys] = useState({ urls: new Set(), companies: new Set() });
@@ -236,6 +237,17 @@ export default function Page() {
 
   const anyFilterOn =
     filtersActive || visaFilter !== "all" || minMatch > 0 || hideApplied;
+
+  // Shown as a badge on the mobile Filters button so a collapsed panel never
+  // hides the fact that something is filtering the results.
+  const activeFilterCount = [
+    expFilter !== "all",
+    typeFilter !== "all",
+    postedFilter !== "all",
+    visaFilter !== "all",
+    minMatch > 0,
+    hideApplied,
+  ].filter(Boolean).length;
 
   // Update local state immediately; persist to the DB when `commit` is true
   // (on select change / input blur) to avoid a write on every keystroke.
@@ -494,10 +506,16 @@ export default function Page() {
       {/* Resume panel */}
       <div className="resume">
         <div className="resumeHead">
-          <span>📄 Resume match</span>
+          <span className="seclabel">Resume match</span>
           {hasResume && (
             <span className="resumeMeta">
-              {resumeName} · <b>{resumeSkills.length} skills</b>
+              {/* The filename truncates and the count doesn't — a long export
+                  name like "…_260507_115537 (updated).pdf" otherwise runs over
+                  the skill count. */}
+              <span className="fname" title={resumeName}>
+                {resumeName}
+              </span>
+              <b className="skillcount">{resumeSkills.length} skills</b>
             </span>
           )}
         </div>
@@ -530,7 +548,7 @@ export default function Page() {
         </div>
         {parseError && <p className="resumeErr">{parseError}</p>}
         {hasResume && (
-          <div className="skillchips">
+          <div className="skillchips detected">
             {resumeSkills.map((s) => (
               <span key={s} className="chip">
                 {skillLabel(s)}
@@ -589,8 +607,22 @@ export default function Page() {
         </div>
       )}
 
-      <div className="toolbar">
-        <button className="btn" onClick={() => load(country)} disabled={loading}>
+      <div className={`toolbar collapsible ${filtersOpen ? "open" : ""}`}>
+        {/* On mobile every control below collapses behind this button — seven
+            stacked full-width selects push the results off the first screen. */}
+        <button
+          className="filterbtn"
+          onClick={() => setFiltersOpen((v) => !v)}
+          aria-expanded={filtersOpen}
+        >
+          {filtersOpen ? "Done" : "⚙ Filters"}
+          {activeFilterCount > 0 && <span className="count">{activeFilterCount}</span>}
+        </button>
+        <button
+          className="btn alwaysvisible"
+          onClick={() => load(country)}
+          disabled={loading}
+        >
           {loading ? "Loading…" : "↻ Refresh"}
         </button>
         <select

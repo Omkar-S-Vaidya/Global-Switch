@@ -17,14 +17,25 @@ export const metadata = {
 };
 
 export const viewport = {
-  themeColor: "#4f6ef7",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f7f8fa" },
+    { media: "(prefers-color-scheme: dark)", color: "#0c0d11" },
+  ],
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover", // let the tab bar sit under the home indicator
 };
+
+// Applies the saved theme before first paint. Without this the page renders in
+// the OS theme and then snaps to the chosen one — a visible flash on every load.
+const THEME_INIT = `try{var t=localStorage.getItem('jobhunt.theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}`;
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+      </head>
       <body>
         {children}
         <Toaster richColors closeButton position="top-center" />
